@@ -914,12 +914,6 @@ export interface TilePreset {
 
 export const TILESET_PRESETS: TilePreset[] = [
   {
-    id: 'grass-dirt',
-    label: 'Lush meadow',
-    prompt:
-      'Lavishly hand-painted lush meadow turf in premium storybook game-art style — a luminous fresh spring-green grass cap of soft layered blades catching warm sunlight along the top, a rich chocolate-brown loam core with gentle volumetric shading, fine even speckles of tiny pebbles and pale fibrous roots, a delicate scatter of small white and buttercup-yellow wildflowers and clover tucked in the grass, dewy soft highlights, cohesive warm inviting palette, crisp readable shapes, beautiful AAA 2D platformer tileset',
-  },
-  {
     id: 'mossy-stone',
     label: 'Mossy stone',
     prompt:
