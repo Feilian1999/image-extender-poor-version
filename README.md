@@ -12,6 +12,18 @@ AI-generated pixels, plus purpose-built pipelines for tiles, sprites, and props.
 Bring your own OpenRouter API key — it stays in your browser, never on the
 server.
 
+> ⚠️ **這是個人修改版 / Personal modified fork.**
+> 本專案 fork 自原作者 [@boona13](https://github.com/boona13) 的
+> [Image Extender](https://github.com/boona13/image-extender)，原始 app、
+> 管線與設計的功勞全歸原作者。此版本額外加入了「外部素材匯入」流程與
+> 「Prompt 提示詞頁」——詳見下方
+> [此 fork 的改動](#此-fork-的改動--whats-different-in-this-fork)。
+>
+> This is a personal fork of [@boona13](https://github.com/boona13)'s
+> [Image Extender](https://github.com/boona13/image-extender). All credit for
+> the original app and pipelines goes to the upstream author; this version only
+> adds an external-sheet import workflow and a Prompt Guide page.
+
 ![A 1024² portrait shot extended into a cinematic wide-angle scene with no visible seam](docs/screenshots/after.png)
 
 ## Before / After
@@ -24,7 +36,7 @@ just much, much more of them.
 | --- | --- |
 | ![Square portrait shot of a person in a yellow jacket on a neon-lit Brooklyn corner](docs/screenshots/before.png) | ![The same scene extended sideways into a wide cinematic frame](docs/screenshots/after.png) |
 
-## Five modes — Extender + Parallax + Tiles + Sprites + Props
+## Six modes — Extender + Parallax + Tiles + Sprites + Props + Prompts
 
 The app ships as a tiny studio with five workspaces, switchable from the pill
 in the top bar:
@@ -50,6 +62,9 @@ in the top bar:
   transparent **decoration sprites** (the kind games layer on top of the tile
   map) generated 8 at a time, driven by a two-call "art director → painter"
   pipeline that keeps the set varied and never repetitive.
+- **Prompt Guide** *(added in this fork)* — copy-paste prompt templates so you
+  can generate the "big sheet" on any external image tool (e.g. Nano Banana),
+  then bring it back via each studio's **Import** button — no API call needed.
 
 ### Parallax Studio
 ![Parallax Studio — Sky / Far / Mid / Near depth layers with a live multi-layer scrolling preview and ZIP export](docs/screenshots/mode-parallax.png)
@@ -62,6 +77,26 @@ in the top bar:
 
 ### Sprite Studio
 ![Sprite Studio — a character walk-cycle keyframe sheet with a live looping animation player](docs/screenshots/mode-sprite.png)
+
+## 此 fork 的改動 / What's different in this fork
+
+原作者的版本用內建 AI（Gemini via OpenRouter）生成大圖。因為現在 Google 已無
+免費 API，這個 fork 增加了「**在別的 AI 生成 → 匯入本 app 切割**」的離線流程：
+
+- **Prompt Guide 頁面** — 內含 sprite / tile / prop 的提示詞模板，可一鍵複製，
+  貼到任何外部 text-to-image 工具（如 Nano Banana）生成大圖。
+- **各 Studio 的 Import 按鈕** — 上傳做好的大圖，走與 AI 相同的
+  切割 / 去背（洋紅 `#FF00FF` → 透明）/ 對齊管線，**完全不呼叫 API**。
+- **Tile 採用 4×4 標記格** — 每格一種 autotile（邊 / 角 / body），
+  text-to-image 也能穩定均分切割（取代原本難以用文字重現的「矩形挖洞」幾何）。
+- **Sprite 匯入時強化尺寸正規化** — 二足角色改用「身高」為基準、放寬校正上限，
+  修正外部大圖常見的「角色忽大忽小」問題。
+
+> The original uses its built-in AI (Gemini via OpenRouter) to generate sheets.
+> Since Google's free tier is gone, this fork adds an offline "generate the sheet
+> on another AI → import it here to slice" flow: a Prompt Guide page, an Import
+> button in each studio (same slice / chroma-key / align pipeline, no API call),
+> a text-to-image-friendly 4×4 tile grid, and stronger sprite scale normalization.
 
 ## Features
 
@@ -342,8 +377,8 @@ enough that 1 attempt usually suffices.
 ## Quick start
 
 ```bash
-git clone https://github.com/boona13/image-extender.git
-cd image-extender
+git clone https://github.com/Feilian1999/image-extender-poor-version.git
+cd image-extender-poor-version
 npm install
 npm run dev
 ```
@@ -474,6 +509,9 @@ A few small values you might want to tune:
 
 ## Acknowledgments
 
+- Original project & all core pipelines: **[@boona13](https://github.com/boona13)** —
+  [Image Extender](https://github.com/boona13/image-extender). This repo is a
+  personal fork.
 - Poisson image editing technique: **Pérez, Gangnet, and Blake (2003) —
   "Poisson Image Editing"**, SIGGRAPH.
 - Google for the Gemini image models, OpenRouter for the unified API.
