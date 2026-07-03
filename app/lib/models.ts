@@ -17,37 +17,40 @@ export type ModelOption = {
 
 export const MODELS: ModelOption[] = [
   {
-    value: 'openai/gpt-5.4-image-2',
-    label: 'GPT-5.4 Image 2',
-    hint: 'OpenAI · high fidelity · slower',
-    maxAttempts: 1,
-    approxSecondsPerCall: 240,
-  },
-  {
-    value: 'google/gemini-3-pro-image-preview',
-    label: 'Gemini 3 Pro Image',
-    hint: 'Nano Banana Pro · highest fidelity',
-    maxAttempts: 1,
-    approxSecondsPerCall: 75,
+    value: 'google/gemini-2.5-flash-image',
+    label: 'Gemini 2.5 Flash Image',
+    hint: 'Nano Banana · FREE with a Google AI Studio key · default',
+    maxAttempts: 3,
+    approxSecondsPerCall: 15,
   },
   {
     value: 'google/gemini-3.1-flash-image-preview',
     label: 'Gemini 3 Flash Image',
-    hint: 'Nano Banana 2 · fast · default',
+    hint: 'Nano Banana 2 · fast · paid (OpenRouter key)',
     maxAttempts: 3,
     approxSecondsPerCall: 18,
   },
   {
-    value: 'google/gemini-2.5-flash-image',
-    label: 'Gemini 2.5 Flash Image',
-    hint: 'Nano Banana · stable',
-    maxAttempts: 3,
-    approxSecondsPerCall: 15,
+    value: 'google/gemini-3-pro-image-preview',
+    label: 'Gemini 3 Pro Image',
+    hint: 'Nano Banana Pro · highest fidelity · paid (OpenRouter key)',
+    maxAttempts: 1,
+    approxSecondsPerCall: 75,
+  },
+  {
+    value: 'openai/gpt-5.4-image-2',
+    label: 'GPT-5.4 Image 2',
+    hint: 'OpenAI · high fidelity · slower · paid (OpenRouter key)',
+    maxAttempts: 1,
+    approxSecondsPerCall: 240,
   },
 ]
 
 
-export const DEFAULT_MODEL = 'google/gemini-3.1-flash-image-preview'
+// Nano Banana is the default: the FREE Google AI Studio tier covers it
+// (hundreds of images/day, no credit card), and it's the cheapest on
+// OpenRouter too.
+export const DEFAULT_MODEL = 'google/gemini-2.5-flash-image'
 
 export function getModelConfig(value: string): ModelOption {
   return (

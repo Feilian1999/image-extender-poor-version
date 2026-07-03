@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
+import {
+  chatCompletion,
+  resolveApiKey,
+  ProviderError,
+  MISSING_KEY_ERROR,
+} from '../_lib/provider'
 
-const DEFAULT_MODEL = 'google/gemini-3.1-flash-image-preview'
+// Nano Banana — free on the Google AI Studio tier, cheap on OpenRouter.
+const DEFAULT_MODEL = 'google/gemini-2.5-flash-image'
 
 const SUPPORTED_IMAGE_ASPECT_RATIOS = [
   '1:1',
@@ -77,15 +84,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const openRouterKey = (typeof apiKey === 'string' && apiKey.trim())
-      ? apiKey.trim()
-      : process.env.OPENROUTER_API_KEY
+    const providerKey = resolveApiKey(apiKey)
 
-    if (!openRouterKey) {
-      return NextResponse.json(
-        { error: 'OpenRouter API key missing. Add one in Settings.' },
-        { status: 401 }
-      )
+    if (!providerKey) {
+      return NextResponse.json({ error: MISSING_KEY_ERROR }, { status: 401 })
     }
 
     const modelId = (typeof model === 'string' && model.trim()) ? model.trim() : DEFAULT_MODEL
@@ -1202,114 +1204,44 @@ ${
       text: fullPrompt,
     })
 
-    // Call OpenRouter API with image generation model
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openRouterKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': request.headers.get('referer') || 'http://localhost:3000',
-        'X-Title': 'AI Image Extender - Generator',
-      },
-      body: JSON.stringify({
-        model: modelId,
-        messages: [
-          {
-            role: 'user',
-            content: messageContent,
-          },
-        ],
-        modalities: ['image', 'text'],
-        // GPT image models are especially literal about the requested canvas
-        // aspect. If omitted, OpenRouter/model defaults can come back square;
-        // the client then normalizes that square into e.g. a 2048×1024 sprite
-        // sheet, visually stretching every frame. Always send the intended
-        // reduced aspect ratio (sprites are 2:1, square anchors are 1:1).
-        image_config: { aspect_ratio: supportedAspectRatioForSize(width, height) },
-        max_tokens: 2000,
-        // Low temperature on multi-cell sheet generation keeps the model
-        // disciplined about the grid layout + per-cell consistency.
-        // Sprite sheets need even lower temperature than tile sheets —
-        // 8 keyframes of the SAME character on one canvas amplifies any
-        // appearance drift between cells (flicker). 0.2 is the value
-        // most 2026 sprite-AI pipelines converged on.
-        temperature:
-          spriteSheet === true
-            ? 0.2
-            : tileSheet === true
-              ? 0.35
-              : propSheet === true
-                ? 0.6
-                : 0.7,
-      }),
+    // Call the provider (OpenRouter or the free Google Gemini API, depending
+    // on the key type) with the image generation model.
+    const result = await chatCompletion({
+      key: providerKey,
+      model: modelId,
+      messages: [
+        {
+          role: 'user',
+          content: messageContent,
+        },
+      ],
+      wantImage: true,
+      // GPT image models are especially literal about the requested canvas
+      // aspect. If omitted, OpenRouter/model defaults can come back square;
+      // the client then normalizes that square into e.g. a 2048×1024 sprite
+      // sheet, visually stretching every frame. Always send the intended
+      // reduced aspect ratio (sprites are 2:1, square anchors are 1:1).
+      aspectRatio: supportedAspectRatioForSize(width, height),
+      maxTokens: 2000,
+      // Low temperature on multi-cell sheet generation keeps the model
+      // disciplined about the grid layout + per-cell consistency.
+      // Sprite sheets need even lower temperature than tile sheets —
+      // 8 keyframes of the SAME character on one canvas amplifies any
+      // appearance drift between cells (flicker). 0.2 is the value
+      // most 2026 sprite-AI pipelines converged on.
+      temperature:
+        spriteSheet === true
+          ? 0.2
+          : tileSheet === true
+            ? 0.35
+            : propSheet === true
+              ? 0.6
+              : 0.7,
+      referer: request.headers.get('referer'),
+      title: 'AI Image Extender - Generator',
     })
 
-    if (!response.ok) {
-      const errorData = await response.json()
-      console.error('OpenRouter API error:', errorData)
-      return NextResponse.json(
-        { error: errorData.error?.message || 'Failed to generate image' },
-        { status: response.status }
-      )
-    }
-
-    const data = await response.json()
-    const message = data.choices?.[0]?.message
-    
-    if (!message) {
-      return NextResponse.json(
-        { error: 'No message in response' },
-        { status: 500 }
-      )
-    }
-
-    // Extract image from response (same logic as extend route)
-    let imageUrl = null
-    
-    // Check if images array exists (Gemini 2.5 Flash format)
-    if (message.images && Array.isArray(message.images) && message.images.length > 0) {
-      const firstImage = message.images[0]
-      if (firstImage.image_url?.url) {
-        imageUrl = firstImage.image_url.url
-      }
-    }
-    
-    // If no image found in images array, check content
-    if (!imageUrl) {
-      const content = message.content
-      
-      if (Array.isArray(content)) {
-        for (const part of content) {
-          if (part.type === 'image_url' && part.image_url?.url) {
-            imageUrl = part.image_url.url
-            break
-          }
-          if (part.type === 'image' && part.url) {
-            imageUrl = part.url
-            break
-          }
-          if (part.image_url?.data) {
-            imageUrl = `data:image/png;base64,${part.image_url.data}`
-            break
-          }
-          if (part.data) {
-            imageUrl = `data:image/png;base64,${part.data}`
-            break
-          }
-          if (part.inline_data?.data) {
-            const mimeType = part.inline_data.mime_type || 'image/png'
-            imageUrl = `data:${mimeType};base64,${part.inline_data.data}`
-            break
-          }
-        }
-      } else if (typeof content === 'string') {
-        if (content.startsWith('data:image') || content.startsWith('http')) {
-          imageUrl = content
-        } else if (content.length > 100 && /^[A-Za-z0-9+/=]+$/.test(content.substring(0, 100))) {
-          imageUrl = `data:image/png;base64,${content}`
-        }
-      }
-    }
+    const imageUrl = result.imageUrl
 
     if (!imageUrl) {
       return NextResponse.json(
@@ -1323,21 +1255,7 @@ ${
     // de-dup list instead of shipping the whole library back as images.
     let names: string[] = []
     if (propSheet === true || propMode === true) {
-      let text = ''
-      const content = message.content
-      if (typeof content === 'string') {
-        text = content
-      } else if (Array.isArray(content)) {
-        text = content
-          .map((part: any) =>
-            typeof part === 'string'
-              ? part
-              : part?.type === 'text' && typeof part.text === 'string'
-                ? part.text
-                : ''
-          )
-          .join(' ')
-      }
+      const text = result.text
       const m = text.match(/ITEMS?\s*:\s*(.+)/i)
       const raw = m ? m[1] : text
       names = raw
@@ -1350,6 +1268,9 @@ ${
     return NextResponse.json({ imageUrl, names })
   } catch (error) {
     console.error('Error in generate route:', error)
+    if (error instanceof ProviderError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Internal server error' },
       { status: 500 }

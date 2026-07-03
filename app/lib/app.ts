@@ -51,7 +51,7 @@ export const STORAGE_MODEL = 'extender:model'
 // ─────────────────────────────────────────────────────────────────────────────
 
 
-export type Mode = 'extender' | 'parallax' | 'tile' | 'sprite' | 'props'
+export type Mode = 'extender' | 'parallax' | 'tile' | 'sprite' | 'props' | 'prompts'
 
 export const STORAGE_MODE = 'extender:mode'
 

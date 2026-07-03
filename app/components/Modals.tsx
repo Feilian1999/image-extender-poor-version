@@ -107,7 +107,7 @@ export function SettingsDrawer({
             </div>
           </Section>
 
-          <Section title="OpenRouter key">
+          <Section title="API key">
             {apiKey ? (
               <div
                 className="flex items-center gap-3 rounded-[var(--radius-sm)] p-3"
@@ -154,11 +154,20 @@ export function SettingsDrawer({
                 className="btn btn-secondary w-full justify-start"
               >
                 <Icons.Key size={14} />
-                Add OpenRouter key
+                Add API key
               </button>
             )}
             <p className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-              Stored only in this browser. Get one at{' '}
+              Stored only in this browser. Get a FREE key at{' '}
+              <a
+                href="https://aistudio.google.com/apikey"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: 'var(--accent)' }}
+              >
+                aistudio.google.com/apikey
+              </a>{' '}
+              or a paid one at{' '}
               <a
                 href="https://openrouter.ai/keys"
                 target="_blank"
@@ -553,7 +562,15 @@ export function ApiKeyModal({
   if (!open) return null
 
   const trimmed = value.trim()
-  const looksValid = trimmed.startsWith('sk-or-') && trimmed.length > 20
+  // Two key types are accepted:
+  //  - Google AI Studio keys ("AQ. ..." new Auth keys, or legacy "AIza...")
+  //    — FREE tier, no credit card
+  //  - OpenRouter keys ("sk-or-...") — paid
+  const looksValid =
+    (trimmed.startsWith('sk-or-') ||
+      trimmed.startsWith('AIza') ||
+      trimmed.startsWith('AQ.')) &&
+    trimmed.length > 20
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 anim-fade">
@@ -581,10 +598,11 @@ export function ApiKeyModal({
           </div>
           <div className="flex-1">
             <h2 className="text-[15px] font-semibold tracking-tight">
-              {required ? 'Add your OpenRouter key' : 'OpenRouter API key'}
+              {required ? 'Add your API key' : 'API key'}
             </h2>
             <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-              Required to generate or extend images.
+              Google AI Studio (free) or OpenRouter (paid). Required to
+              generate or extend images.
             </p>
           </div>
           {!required && (
@@ -606,7 +624,7 @@ export function ApiKeyModal({
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && looksValid) onSave(trimmed)
               }}
-              placeholder="sk-or-..."
+              placeholder="AQ.... / AIza... (free) or sk-or-..."
               className="field pr-10 font-mono text-[13px]"
             />
             <button
@@ -625,7 +643,11 @@ export function ApiKeyModal({
               style={{ color: 'var(--danger)' }}
             >
               <Icons.AlertTriangle size={13} className="mt-0.5 shrink-0" />
-              <span>OpenRouter keys start with <code className="font-mono">sk-or-</code>.</span>
+              <span>
+                Google AI Studio keys start with <code className="font-mono">AQ.</code>{' '}
+                (or legacy <code className="font-mono">AIza</code>); OpenRouter keys
+                start with <code className="font-mono">sk-or-</code>.
+              </span>
             </div>
           )}
         </div>
@@ -639,19 +661,31 @@ export function ApiKeyModal({
           }}
         >
           Your key is stored only in this browser&apos;s <code className="font-mono">localStorage</code>.
-          It&apos;s sent with each request to your local server, which proxies it to OpenRouter — never logged, never persisted server-side.
+          It&apos;s sent with each request to your local server, which proxies it to Google or OpenRouter — never logged, never persisted server-side.
         </div>
 
-        <a
-          href="https://openrouter.ai/keys"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mb-5 inline-flex items-center gap-1.5 text-[12px] transition-colors"
-          style={{ color: 'var(--accent)' }}
-        >
-          Get a key at openrouter.ai/keys
-          <Icons.External size={11} />
-        </a>
+        <div className="mb-5 flex flex-col gap-1.5">
+          <a
+            href="https://aistudio.google.com/apikey"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-[12px] transition-colors"
+            style={{ color: 'var(--accent)' }}
+          >
+            Get a FREE key at aistudio.google.com/apikey (no credit card)
+            <Icons.External size={11} />
+          </a>
+          <a
+            href="https://openrouter.ai/keys"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1.5 text-[12px] transition-colors"
+            style={{ color: 'var(--accent)' }}
+          >
+            Or a paid key at openrouter.ai/keys (more models)
+            <Icons.External size={11} />
+          </a>
+        </div>
 
         <div className="flex items-center justify-between gap-2">
           {!required && onSkip ? (

@@ -1,4 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
+import {
+  chatCompletion,
+  resolveApiKey,
+  ProviderError,
+  MISSING_KEY_ERROR,
+} from '../_lib/provider'
 
 // ART DIRECTOR — call #1 of the two-call props pipeline.
 //
@@ -104,16 +110,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing biome prompt' }, { status: 400 })
     }
 
-    const openRouterKey =
-      typeof apiKey === 'string' && apiKey.trim()
-        ? apiKey.trim()
-        : process.env.OPENROUTER_API_KEY
+    const providerKey = resolveApiKey(apiKey)
 
-    if (!openRouterKey) {
-      return NextResponse.json(
-        { error: 'OpenRouter API key missing. Add one in Settings.' },
-        { status: 401 }
-      )
+    if (!providerKey) {
+      return NextResponse.json({ error: MISSING_KEY_ERROR }, { status: 401 })
     }
 
     const modelId =
@@ -157,47 +157,22 @@ Output STRICT JSON only — no prose, no markdown fences. Schema:
 
 Propose ${n} brand-new decoration props as strict JSON.`
 
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${openRouterKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': request.headers.get('referer') || 'http://localhost:3000',
-        'X-Title': 'AI Image Extender - Prop Art Director',
-      },
-      body: JSON.stringify({
-        model: modelId,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        max_tokens: 900,
-        // High temperature: this is the CREATIVE step. We want it reaching for
-        // novel kinds, not playing it safe.
-        temperature: 1.0,
-      }),
+    const result = await chatCompletion({
+      key: providerKey,
+      model: modelId,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      maxTokens: 900,
+      // High temperature: this is the CREATIVE step. We want it reaching for
+      // novel kinds, not playing it safe.
+      temperature: 1.0,
+      referer: request.headers.get('referer'),
+      title: 'AI Image Extender - Prop Art Director',
     })
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}))
-      return NextResponse.json(
-        { error: errorData.error?.message || 'Failed to generate prop brief' },
-        { status: response.status }
-      )
-    }
-
-    const data = await response.json()
-    const content = data.choices?.[0]?.message?.content
-    const raw =
-      typeof content === 'string'
-        ? content
-        : Array.isArray(content)
-          ? content
-              .map((p: { text?: string }) => (typeof p?.text === 'string' ? p.text : ''))
-              .join('')
-          : ''
-
-    const ideas = parseIdeas(raw).slice(0, n)
+    const ideas = parseIdeas(result.text).slice(0, n)
     if (ideas.length === 0) {
       return NextResponse.json(
         { error: 'Art director returned no usable ideas' },
@@ -208,6 +183,9 @@ Propose ${n} brand-new decoration props as strict JSON.`
     return NextResponse.json({ ideas })
   } catch (error) {
     console.error('Error in prop-brief route:', error)
+    if (error instanceof ProviderError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Internal server error' },
       { status: 500 }

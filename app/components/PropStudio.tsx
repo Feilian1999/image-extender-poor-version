@@ -115,6 +115,7 @@ export function PropStudio({
   setSceneBrief,
   sceneBriefLoading,
   onAddMore,
+  onImportSheet,
   onStop,
   onRegenerate,
   onDelete,
@@ -134,6 +135,7 @@ export function PropStudio({
   setSceneBrief: (v: string) => void
   sceneBriefLoading: boolean
   onAddMore: () => void
+  onImportSheet: (file: File) => void
   onStop: () => void
   onRegenerate: (id: string) => void
   onDelete: (id: string) => void
@@ -177,6 +179,25 @@ export function PropStudio({
             <Icons.Plus size={14} />
             {hasAny ? `Add ${batchSize} more` : `Generate ${batchSize} props`}
           </button>
+        )}
+        {!generating && (
+          <label
+            className="btn btn-secondary cursor-pointer"
+            title="Import a pre-made 4×2 prop atlas on a magenta #FF00FF background and just slice + de-background it (no AI)"
+          >
+            <Icons.Upload size={14} />
+            Import atlas
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) onImportSheet(file)
+                e.target.value = ''
+              }}
+            />
+          </label>
         )}
         <button
           onClick={onDownloadSheet}

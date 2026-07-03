@@ -2821,6 +2821,11 @@ interface FrameScaleOptions {
   /** Clamp each frame's scale correction to ±this fraction so real pose
    *  extension/squash is preserved. Default 0.18. */
   maxScaleAdjust?: number
+  /** Size metric. 'diagonal' (default) = √(w²+h²), pose-stable for creatures
+   *  that flatten (quadruped/serpent). 'height' = bbox height only, best for
+   *  an upright biped whose WIDTH swings with stride/arm-swing but whose
+   *  head-to-foot height is the true, stable size. */
+  metric?: 'diagonal' | 'height'
 }
 
 /**
@@ -2846,13 +2851,17 @@ export async function normalizeSpriteFrameScale(
   const noiseFloorPx = opts.noiseFloorPx ?? 3
   const tolerance = opts.tolerance ?? 0.05
   const maxScaleAdjust = opts.maxScaleAdjust ?? 0.18
+  const metric = opts.metric ?? 'diagonal'
 
   const images = await Promise.all(cells.map((c) => loadImageFromUrl(c)))
   const boxes = images.map((img) =>
     measureAlphaBBox(img, alphaThreshold, noiseFloorPx)
   )
-  // Pose-stable size metric: bbox diagonal.
-  const sizes = boxes.map((b) => (b ? Math.hypot(b.w, b.h) : -1))
+  // Size metric: bbox diagonal (pose-stable for flattening creatures) or bbox
+  // height (best for an upright biped whose width swings with stride).
+  const sizes = boxes.map((b) =>
+    b ? (metric === 'height' ? b.h : Math.hypot(b.w, b.h)) : -1
+  )
   const valid = sizes.filter((s) => s > 0).sort((a, b) => a - b)
   if (valid.length === 0) {
     return { cells, targetSize: null, sizes, scales: sizes.map(() => 1) }

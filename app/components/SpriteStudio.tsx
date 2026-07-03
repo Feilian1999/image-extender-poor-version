@@ -359,6 +359,7 @@ export function SpriteStudio({
   onGenerate,
   onRerollCharacter,
   onUploadCharacter,
+  onImportSheet,
   onRemoveUploadedCharacter,
   onStop,
   onClear,
@@ -389,6 +390,7 @@ export function SpriteStudio({
   onGenerate: () => void
   onRerollCharacter: () => void
   onUploadCharacter: (file: File) => void
+  onImportSheet: (file: File) => void
   onRemoveUploadedCharacter: () => void
   onStop: () => void
   onClear: () => void
@@ -399,6 +401,7 @@ export function SpriteStudio({
   const [playing, setPlaying] = useState(true)
   const [dragOver, setDragOver] = useState(false)
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
+  const importSheetInputRef = useRef<HTMLInputElement | null>(null)
   const spec = SPRITE_ANIMATIONS[selectedAnim]
   const filledCount = sheet.frames.filter((f) => !!f.imageUrl).length
   const activeCount = sheet.frames.filter((f) => !!f.imageUrl && !f.disabled).length
@@ -752,6 +755,38 @@ export function SpriteStudio({
                 Drag &amp; drop or click to browse · transparent PNG works best
               </span>
             </span>
+          </button>
+
+          {/* Import a FINISHED sheet — skips AI entirely. Feed a pre-made 4×2
+              (8-frame) sheet (e.g. generated externally with the Prompt Guide
+              template) straight into the slice / de-background / align pipeline. */}
+          <input
+            ref={importSheetInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) onImportSheet(file)
+              e.target.value = ''
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => !generating && importSheetInputRef.current?.click()}
+            disabled={generating}
+            className="inline-flex items-center gap-1.5 self-start rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors"
+            style={{
+              border: '1px solid var(--border)',
+              background: 'var(--bg-elev)',
+              color: 'var(--text-muted)',
+              cursor: generating ? 'not-allowed' : 'pointer',
+              opacity: generating ? 0.5 : 1,
+            }}
+            title="Import a pre-made 4×2 / 8-frame sheet on a magenta #FF00FF background and just slice + de-background it (no AI)"
+          >
+            <Icons.Layers size={12} />
+            Import finished sheet (skip AI)
           </button>
 
           {/* Remove uploaded character — lets the user drop the upload and go

@@ -5,6 +5,7 @@ import { CommandBar } from '@/app/components/CommandBar'
 import { EmptyState } from '@/app/components/EmptyState'
 import { ApiKeyModal, ErrorToast, GenerateModal, SettingsDrawer, Toggle } from '@/app/components/Modals'
 import { ParallaxStudio } from '@/app/components/ParallaxStudio'
+import { PromptGuide } from '@/app/components/PromptGuide'
 import { PropStudio } from '@/app/components/PropStudio'
 import { SpriteStudio } from '@/app/components/SpriteStudio'
 import { TileStudio } from '@/app/components/TileStudio'
@@ -216,7 +217,8 @@ export default function Home() {
         savedMode === 'extender' ||
         savedMode === 'tile' ||
         savedMode === 'sprite' ||
-        savedMode === 'props'
+        savedMode === 'props' ||
+        savedMode === 'prompts'
       ) {
         setModeState(savedMode)
       }
@@ -1305,6 +1307,146 @@ export default function Home() {
     }
   }
 
+  /**
+   * Align → slice → process → reconcile a raw RESTYLED TILE MAP (the
+   * "rectangle-with-a-hole" template painted with a material) into the 13-role
+   * url map. Shared by the AI path (`renderSheetOnce`) and the "Import sheet"
+   * path (`handleImportTileSheet`) so an externally-restyled map gets the exact
+   * same slicing at the fixed role coordinates. Returns null if stopped. */
+  const processRawTileSheet = async (
+    rawMapUrl: string,
+    onPhase?: (label: string) => void
+  ): Promise<Partial<Record<TileSetRole, string>> | null> => {
+    onPhase?.('Aligning to template')
+    const aligned = await alignAiOutputToTemplate(rawMapUrl)
+    if (tileStopRef.current) return null
+
+    onPhase?.('Slicing template')
+    const cells = await sliceImageGrid(aligned, {
+      cols: TILE_TEMPLATE_COLS,
+      rows: TILE_TEMPLATE_ROWS,
+      cellSize: TILE_TEMPLATE_CELL,
+    })
+    if (tileStopRef.current) return null
+
+    onPhase?.('Processing tiles')
+    const processed = await Promise.all(
+      TILESET_SLOTS.map(async (spec) => {
+        const sample = TILE_TEMPLATE_SAMPLES[spec.role]
+        const cellIdx = sample.row * TILE_TEMPLATE_COLS + sample.col
+        const raw = cells[cellIdx]
+        if (!raw) return { role: spec.role, imageUrl: null }
+        try {
+          const out = await postProcessTile(spec.role, raw)
+          return { role: spec.role, imageUrl: out }
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn(`Post-process failed for ${spec.role}:`, err)
+          return { role: spec.role, imageUrl: raw }
+        }
+      })
+    )
+
+    onPhase?.('Reconciling corners')
+    const byRoleUrl: Partial<Record<TileSetRole, string>> = {}
+    processed.forEach((p) => {
+      if (p.imageUrl) byRoleUrl[p.role] = p.imageUrl
+    })
+    let reconciled = byRoleUrl
+    try {
+      reconciled = await reconcileAllCorners(byRoleUrl)
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('Corner reconcile failed; using raw corners:', err)
+    }
+    return reconciled
+  }
+
+  /** Import a pre-made LABELED 4×4 TILE GRID (one autotile piece per cell, e.g.
+   * generated externally with the Prompt Guide tile template) and slice the 13
+   * roles from their fixed grid cells — no API call. Uniform cells make this
+   * robust to the exact art; each role's magenta mask is forced downstream. */
+  const handleImportTileSheet = async (file: File) => {
+    if (tileSetGenerating) return
+    if (!file.type.startsWith('image/')) {
+      setError('Please choose an image file — a 4×4 tile grid on a magenta #FF00FF background.')
+      return
+    }
+    setError(null)
+    tileStopRef.current = false
+    setTileSetGenerating(true)
+    setTileProgressMsg('Importing map…')
+    setTileSet((prev) => prev.map((s) => ({ ...s, generating: true })))
+    const startedAt = Date.now()
+    try {
+      const rawDataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = () => reject(new Error('Failed to read the file'))
+        reader.readAsDataURL(file)
+      })
+      // Uniform 4×4 grid slice — one autotile role per cell (matching the
+      // labeled-grid Prompt Guide template). This is robust to the exact art
+      // content: cells are evenly spaced, so slicing always lands correctly,
+      // and postProcessTile/enforceTileRoleMask force each role's magenta mask.
+      setTileProgressMsg('Slicing 4×4 grid…')
+      const cells = await sliceImageGrid(rawDataUrl, {
+        cols: TILESET_COLS,
+        rows: TILESET_ROWS,
+        cellSize: TILESET_TILE_SIZE,
+      })
+      if (tileStopRef.current) return
+      setTileProgressMsg('Processing tiles…')
+      const processed = await Promise.all(
+        TILESET_SLOTS.map(async (spec) => {
+          const raw = cells[spec.row * TILESET_COLS + spec.col]
+          if (!raw) return { role: spec.role, imageUrl: null }
+          try {
+            return { role: spec.role, imageUrl: await postProcessTile(spec.role, raw) }
+          } catch {
+            return { role: spec.role, imageUrl: raw }
+          }
+        })
+      )
+      if (tileStopRef.current) return
+      const byRoleUrl: Partial<Record<TileSetRole, string>> = {}
+      processed.forEach((p) => {
+        if (p.imageUrl) byRoleUrl[p.role] = p.imageUrl
+      })
+      setTileProgressMsg('Reconciling corners…')
+      let map = byRoleUrl
+      try {
+        map = await reconcileAllCorners(byRoleUrl)
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('Corner reconcile failed; using raw corners:', err)
+      }
+      if (tileStopRef.current) return
+      setTileSet((prev) =>
+        prev.map((slot) => {
+          const url = map[slot.role] ?? null
+          return {
+            role: slot.role,
+            imageUrl: url,
+            hasImage: !!url,
+            generating: false,
+          }
+        })
+      )
+    } catch (err) {
+      setTileSet((prev) => prev.map((s) => ({ ...s, generating: false })))
+      setError(
+        err instanceof Error ? err.message : 'Failed to import the tile map'
+      )
+    } finally {
+      setTileSetGenerating(false)
+      setTileProgressMsg(null)
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000)
+      // eslint-disable-next-line no-console
+      if (debugMode) console.log(`🧱 Tile map imported in ${elapsed}s`)
+    }
+  }
+
   const handleGenerateTileSet = async () => {
     if (tileSetGenerating) return
     if (!tilePrompt.trim()) {
@@ -1366,49 +1508,9 @@ export default function Home() {
       if (!data.imageUrl) throw new Error('No image returned from API')
       if (tileStopRef.current) return null
 
-      phase = 'Aligning to template'
-      const aligned = await alignAiOutputToTemplate(data.imageUrl)
-      if (tileStopRef.current) return null
-
-      phase = 'Slicing template'
-      const cells = await sliceImageGrid(aligned, {
-        cols: TILE_TEMPLATE_COLS,
-        rows: TILE_TEMPLATE_ROWS,
-        cellSize: TILE_TEMPLATE_CELL,
+      return processRawTileSheet(data.imageUrl, (p) => {
+        phase = p
       })
-      if (tileStopRef.current) return null
-
-      phase = 'Processing tiles'
-      const processed = await Promise.all(
-        TILESET_SLOTS.map(async (spec) => {
-          const sample = TILE_TEMPLATE_SAMPLES[spec.role]
-          const cellIdx = sample.row * TILE_TEMPLATE_COLS + sample.col
-          const raw = cells[cellIdx]
-          if (!raw) return { role: spec.role, imageUrl: null }
-          try {
-            const out = await postProcessTile(spec.role, raw)
-            return { role: spec.role, imageUrl: out }
-          } catch (err) {
-            // eslint-disable-next-line no-console
-            console.warn(`Post-process failed for ${spec.role}:`, err)
-            return { role: spec.role, imageUrl: raw }
-          }
-        })
-      )
-
-      phase = 'Reconciling corners'
-      const byRoleUrl: Partial<Record<TileSetRole, string>> = {}
-      processed.forEach((p) => {
-        if (p.imageUrl) byRoleUrl[p.role] = p.imageUrl
-      })
-      let reconciled = byRoleUrl
-      try {
-        reconciled = await reconcileAllCorners(byRoleUrl)
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn('Corner reconcile failed; using raw corners:', err)
-      }
-      return reconciled
     }
 
     // `reviewing` keeps each populated cell's spinner overlay on while the art
@@ -2138,6 +2240,94 @@ export default function Home() {
     propStopRef.current = true
   }
 
+  /** True if a data URL has a meaningful amount of non-transparent pixels.
+   * Used to drop empty (magenta-only) cells when importing a grid sheet.
+   * Samples at 64×64 for speed. */
+  const imageHasContent = (
+    dataUrl: string,
+    minFraction = 0.005
+  ): Promise<boolean> =>
+    new Promise((resolve) => {
+      const img = new Image()
+      img.onload = () => {
+        const S = 64
+        const c = document.createElement('canvas')
+        c.width = S
+        c.height = S
+        const ctx = c.getContext('2d')
+        if (!ctx) return resolve(true)
+        ctx.drawImage(img, 0, 0, S, S)
+        const { data } = ctx.getImageData(0, 0, S, S)
+        let opaque = 0
+        for (let i = 3; i < data.length; i += 4) if (data[i] > 24) opaque++
+        resolve(opaque / (S * S) >= minFraction)
+      }
+      img.onerror = () => resolve(true)
+      img.src = dataUrl
+    })
+
+  /** Import a pre-made PROP ATLAS (e.g. one generated externally with the
+   * Prompt Guide template) and append its cells as props — skips the
+   * art-director + AI generation calls. Slices a 4×2 grid, keys magenta to
+   * transparency via the same postProcessProp used by the AI path, and drops
+   * any empty (magenta-only) cells. */
+  const handleImportPropSheet = async (file: File) => {
+    if (propSetGenerating) return
+    if (!file.type.startsWith('image/')) {
+      setError('Please choose an image file — a prop atlas on a magenta #FF00FF background.')
+      return
+    }
+    setError(null)
+    propStopRef.current = false
+    setPropSetGenerating(true)
+    setPropProgressMsg('Importing atlas…')
+    const startedAt = Date.now()
+    try {
+      const rawDataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = () => reject(new Error('Failed to read the file'))
+        reader.readAsDataURL(file)
+      })
+      const cells = await sliceImageGrid(rawDataUrl, {
+        cols: PROP_BATCH_COLS,
+        rows: PROP_BATCH_ROWS,
+        cellSize: PROP_TILE_SIZE,
+      })
+      if (propStopRef.current) return
+      setPropProgressMsg('Processing…')
+      const processed = await Promise.all(
+        cells.map(async (raw) => {
+          try {
+            const url = await postProcessProp(raw)
+            return (await imageHasContent(url)) ? url : null
+          } catch {
+            return null
+          }
+        })
+      )
+      if (propStopRef.current) return
+      const newItems = processed
+        .filter((url): url is string => !!url)
+        .map((url) => ({ id: nextPropId(), imageUrl: url, generating: false }))
+      if (newItems.length === 0) {
+        setError('No props found — expected a 4×2 grid of decorations on a magenta background.')
+        return
+      }
+      setPropItems((prev) => [...prev, ...newItems])
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Failed to import the prop atlas'
+      )
+    } finally {
+      setPropSetGenerating(false)
+      setPropProgressMsg(null)
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000)
+      // eslint-disable-next-line no-console
+      if (debugMode) console.log(`🌿 Prop atlas imported in ${elapsed}s`)
+    }
+  }
+
   /** Re-roll a single prop in place — a new decoration matched to the rest of
    * the library's style (the other props are passed as a reference). */
   const handleRegenerateProp = async (id: string) => {
@@ -2438,6 +2628,27 @@ export default function Home() {
     }
     if (!data.imageUrl) throw new Error('No image returned from API')
     const rawSheetUrl: string = data.imageUrl
+    return processRawSpriteSheet(rawSheetUrl)
+  }
+
+  /**
+   * Slice → chroma-key → clean → scale-normalize → baseline-align → center a
+   * raw 4×2 sprite sheet into playable frames. Shared by the AI path
+   * (`runSpriteSheetPass`) and the "Import sheet" path (`handleImportSpriteSheet`)
+   * so an externally-generated sheet gets the exact same post-processing.
+   */
+  const processRawSpriteSheet = async (
+    rawSheetUrl: string,
+    scaleOpts?: {
+      tolerance?: number
+      maxScaleAdjust?: number
+      metric?: 'diagonal' | 'height'
+    }
+  ): Promise<{
+    rawSheetUrl: string
+    keyedCells: string[]
+    keyedSheetUrl: string | null
+  }> => {
     const rawCells = await sliceImageGrid(rawSheetUrl, {
       cols: SPRITE_GRID_COLS,
       rows: SPRITE_GRID_ROWS,
@@ -2483,8 +2694,9 @@ export default function Home() {
     let alignedCells = keyedCells
     try {
       const scaled = await normalizeSpriteFrameScale(keyedCells, {
-        tolerance: 0.05,
-        maxScaleAdjust: 0.18,
+        tolerance: scaleOpts?.tolerance ?? 0.05,
+        maxScaleAdjust: scaleOpts?.maxScaleAdjust ?? 0.18,
+        metric: scaleOpts?.metric ?? 'diagonal',
       })
       alignedCells = scaled.cells
       // eslint-disable-next-line no-console
@@ -2937,6 +3149,68 @@ export default function Home() {
           ? err.message
           : 'Failed to process the uploaded character image'
       )
+    }
+  }
+
+  /** Import a pre-made sprite SHEET (e.g. one generated on an external tool
+   * with the Prompt Guide template) and run the SAME slice → chroma-key →
+   * align pipeline the AI path uses — no API call. The uploaded image is
+   * sliced as a 4×2 / 8-frame grid; magenta is keyed to transparency.
+   * (Sheets on a magenta or already-transparent background work best.) */
+  const handleImportSpriteSheet = async (file: File) => {
+    if (spriteGenerating) return
+    if (!file.type.startsWith('image/')) {
+      setError('Please choose an image file — a 4×2 (8-frame) sheet on a magenta #FF00FF background.')
+      return
+    }
+    setError(null)
+    spriteStopRef.current = false
+    setSpriteGenerating(true)
+    setSpriteProgressMsg('Importing sheet…')
+    const startedAt = Date.now()
+    try {
+      const rawDataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = () => reject(new Error('Failed to read the file'))
+        reader.readAsDataURL(file)
+      })
+      setSpriteProgressMsg('Slicing & keying…')
+      // sliceImageGrid normalizes any resolution to the exact sheet size, so
+      // the upload can go straight in. chromaKeyToAlpha strips the magenta.
+      // External sheets vary the character's size FAR more than the guided AI
+      // path (no pose-map to lock scale), so normalize aggressively: allow a
+      // big correction toward the median, and for a biped measure by HEIGHT
+      // (head-to-foot is stable; width swings with the walk stride).
+      const result = await processRawSpriteSheet(rawDataUrl, {
+        tolerance: 0.03,
+        maxScaleAdjust: 0.5,
+        metric: spriteBodyPlan === 'biped' ? 'height' : 'diagonal',
+      })
+      if (spriteStopRef.current) return
+      // Imported sheets aren't tied to a generated anchor; drop it plus any
+      // cached animations from a previous character so the studio is clean.
+      spriteSheetCacheRef.current = {}
+      setSpriteAnchor(null)
+      setSpriteSheet((prev) => ({
+        ...prev,
+        anim: spriteAnim,
+        frames: result.keyedCells.map((url, i) => ({ index: i, imageUrl: url })),
+        gridSheetUrl: result.keyedSheetUrl,
+        rawGridSheetUrl: result.rawSheetUrl,
+        prompt: spritePrompt.trim() || 'Imported sheet',
+        fps: spriteFps,
+      }))
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Failed to import the sprite sheet'
+      )
+    } finally {
+      setSpriteGenerating(false)
+      setSpriteProgressMsg(null)
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000)
+      // eslint-disable-next-line no-console
+      if (debugMode) console.log(`🎭 Sprite sheet imported in ${elapsed}s`)
     }
   }
 
@@ -3756,6 +4030,7 @@ export default function Home() {
   const isTile = mode === 'tile'
   const isSprite = mode === 'sprite'
   const isProps = mode === 'props'
+  const isPrompts = mode === 'prompts'
 
   const variantSelectorEl =
     isResult && variantCount > 1 ? (
@@ -3828,7 +4103,9 @@ export default function Home() {
         onShowSettings={() => setShowSettings(true)}
       />
 
-      {isProps ? (
+      {isPrompts ? (
+        <PromptGuide onGoToStudio={setMode} />
+      ) : isProps ? (
         <PropStudio
           items={propItems}
           batchSize={PROP_BATCH}
@@ -3842,6 +4119,7 @@ export default function Home() {
           setSceneBrief={setSceneBrief}
           sceneBriefLoading={sceneBriefLoading}
           onAddMore={handleAddPropBatch}
+          onImportSheet={handleImportPropSheet}
           onStop={handleStopPropSet}
           onRegenerate={handleRegenerateProp}
           onDelete={handleDeleteProp}
@@ -3869,6 +4147,7 @@ export default function Home() {
           onGenerate={() => handleGenerateSpriteSheet()}
           onRerollCharacter={handleRerollSpriteCharacter}
           onUploadCharacter={handleUploadSpriteCharacter}
+          onImportSheet={handleImportSpriteSheet}
           onRemoveUploadedCharacter={handleRemoveUploadedCharacter}
           onStop={handleStopSpriteSheet}
           onClear={handleClearSpriteSheet}
@@ -3889,6 +4168,7 @@ export default function Home() {
           setSceneBrief={setSceneBrief}
           sceneBriefLoading={sceneBriefLoading}
           onGenerateAll={handleGenerateTileSet}
+          onImportSheet={handleImportTileSheet}
           onStop={handleStopTileSet}
           onRegenerate={handleRegenerateTile}
           onClearAll={handleClearTileSet}

@@ -255,6 +255,7 @@ export function TileStudio({
   setSceneBrief,
   sceneBriefLoading,
   onGenerateAll,
+  onImportSheet,
   onStop,
   onRegenerate,
   onClearAll,
@@ -272,6 +273,7 @@ export function TileStudio({
   setSceneBrief: (v: string) => void
   sceneBriefLoading: boolean
   onGenerateAll: () => void
+  onImportSheet: (file: File) => void
   onStop: () => void
   onRegenerate: (role: TileSetRole) => void
   onClearAll: () => void
@@ -333,6 +335,25 @@ export function TileStudio({
             <Icons.Sparkle size={14} />
             {hasAny ? 'Re-roll sheet' : 'Generate sheet (1 call)'}
           </button>
+        )}
+        {!generating && (
+          <label
+            className="btn btn-secondary cursor-pointer"
+            title="Import a pre-made 4×4 tile grid on magenta #FF00FF (one autotile piece per cell — see the Prompts tab). Sliced on uniform cells, no AI."
+          >
+            <Icons.Upload size={14} />
+            Import grid
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) onImportSheet(file)
+                e.target.value = ''
+              }}
+            />
+          </label>
         )}
         <button
           onClick={onDownloadSheet}

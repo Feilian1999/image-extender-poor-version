@@ -1,4 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
+import {
+  chatCompletion,
+  resolveApiKey,
+  ProviderError,
+  MISSING_KEY_ERROR,
+} from '../_lib/provider'
 
 // QA ART DIRECTOR — the review half of the reverse two-call tile pipeline.
 //
@@ -64,16 +70,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const openRouterKey =
-      typeof apiKey === 'string' && apiKey.trim()
-        ? apiKey.trim()
-        : process.env.OPENROUTER_API_KEY
+    const providerKey = resolveApiKey(apiKey)
 
-    if (!openRouterKey) {
-      return NextResponse.json(
-        { error: 'OpenRouter API key missing. Add one in Settings.' },
-        { status: 401 }
-      )
+    if (!providerKey) {
+      return NextResponse.json({ error: MISSING_KEY_ERROR }, { status: 401 })
     }
 
     const modelId =
@@ -132,46 +132,21 @@ Review the attached platform preview${
     }
     content.push({ type: 'text', text: userText })
 
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${openRouterKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': request.headers.get('referer') || 'http://localhost:3000',
-        'X-Title': 'AI Image Extender - Tile QA',
-      },
-      body: JSON.stringify({
-        model: modelId,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content },
-        ],
-        max_tokens: 600,
-        // Low temperature: this is a judgment call, we want consistency.
-        temperature: 0.2,
-      }),
+    const result = await chatCompletion({
+      key: providerKey,
+      model: modelId,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content },
+      ],
+      maxTokens: 600,
+      // Low temperature: this is a judgment call, we want consistency.
+      temperature: 0.2,
+      referer: request.headers.get('referer'),
+      title: 'AI Image Extender - Tile QA',
     })
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}))
-      return NextResponse.json(
-        { error: errorData.error?.message || 'Failed to review tileset' },
-        { status: response.status }
-      )
-    }
-
-    const data = await response.json()
-    const raw = data.choices?.[0]?.message?.content
-    const text =
-      typeof raw === 'string'
-        ? raw
-        : Array.isArray(raw)
-          ? raw
-              .map((p: { text?: string }) => (typeof p?.text === 'string' ? p.text : ''))
-              .join('')
-          : ''
-
-    const review = parseReview(text)
+    const review = parseReview(result.text)
     if (!review) {
       // Don't block the user on a parse failure — treat as approved.
       return NextResponse.json({ ok: true, issues: [], fix: '' })
@@ -179,6 +154,9 @@ Review the attached platform preview${
     return NextResponse.json(review)
   } catch (error) {
     console.error('Error in tile-review route:', error)
+    if (error instanceof ProviderError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Internal server error' },
       { status: 500 }

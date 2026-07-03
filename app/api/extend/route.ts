@@ -1,63 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
+import {
+  chatCompletion,
+  resolveApiKey,
+  ProviderError,
+  MISSING_KEY_ERROR,
+} from '../_lib/provider'
 
-// Default model when the client doesn't specify one.
-const DEFAULT_MODEL = 'google/gemini-3.1-flash-image-preview'
-
-/**
- * Walk an arbitrary OpenAI/OpenRouter response shape and pull out the first
- * image data URL we can find. Different image-output chat models put the
- * payload in different places (top-level `images[]`, `content[].image_url`,
- * inline_data, raw base64 strings, etc.) so we check all of them.
- */
-function extractImageFromAny(node: any): string | null {
-  if (!node) return null
-
-  // images: [{ image_url: { url } }] — Gemini and many image-output chat models
-  if (Array.isArray(node.images) && node.images.length > 0) {
-    for (const img of node.images) {
-      if (img?.image_url?.url) return img.image_url.url
-      if (img?.url) return img.url
-      if (img?.b64_json) return `data:image/png;base64,${img.b64_json}`
-    }
-  }
-
-  // Some OpenAI-style responses expose raw base64 directly as b64_json
-  if (typeof node.b64_json === 'string' && node.b64_json.length > 100) {
-    return `data:image/png;base64,${node.b64_json}`
-  }
-
-  const content = node.content
-  if (Array.isArray(content)) {
-    for (const part of content) {
-      if (part?.type === 'image_url' && part?.image_url?.url) return part.image_url.url
-      if (part?.type === 'image' && part?.url) return part.url
-      if (part?.image_url?.data) return `data:image/png;base64,${part.image_url.data}`
-      if (part?.b64_json) return `data:image/png;base64,${part.b64_json}`
-      if (part?.data && typeof part.data === 'string' && part.data.length > 100) {
-        return `data:image/png;base64,${part.data}`
-      }
-      if (part?.inline_data?.data) {
-        const mime = part.inline_data.mime_type || 'image/png'
-        return `data:${mime};base64,${part.inline_data.data}`
-      }
-    }
-  } else if (typeof content === 'string') {
-    if (content.startsWith('data:image') || content.startsWith('http')) return content
-    if (content.length > 100 && /^[A-Za-z0-9+/=]+$/.test(content.substring(0, 100))) {
-      return `data:image/png;base64,${content}`
-    }
-    const urlMatch = content.match(/!\[.*?\]\((.*?)\)/)
-    if (urlMatch && urlMatch[1]) return urlMatch[1]
-  } else if (content && typeof content === 'object') {
-    if ((content as any).data) return `data:image/png;base64,${(content as any).data}`
-    if ((content as any).inline_data?.data) {
-      const mime = (content as any).inline_data.mime_type || 'image/png'
-      return `data:${mime};base64,${(content as any).inline_data.data}`
-    }
-  }
-
-  return null
-}
+// Default model when the client doesn't specify one. Nano Banana — free on
+// the Google AI Studio tier, cheap on OpenRouter.
+const DEFAULT_MODEL = 'google/gemini-2.5-flash-image'
 
 export async function POST(request: NextRequest) {
   try {
@@ -86,15 +37,10 @@ export async function POST(request: NextRequest) {
 
     // Prefer client-provided key (BYOK model for open-source use), fall back
     // to env var for local development and hosted demos.
-    const openRouterKey = (typeof apiKey === 'string' && apiKey.trim())
-      ? apiKey.trim()
-      : process.env.OPENROUTER_API_KEY
+    const providerKey = resolveApiKey(apiKey)
 
-    if (!openRouterKey) {
-      return NextResponse.json(
-        { error: 'OpenRouter API key missing. Add one in Settings.' },
-        { status: 401 }
-      )
+    if (!providerKey) {
+      return NextResponse.json({ error: MISSING_KEY_ERROR }, { status: 401 })
     }
 
     const modelId = (typeof model === 'string' && model.trim()) ? model.trim() : DEFAULT_MODEL
@@ -285,102 +231,45 @@ KEY INSTRUCTIONS:
       prompt += `\n\nOUTPUT DIMENSIONS: Return the image at exactly ${chunkW}x${chunkH} pixels — the same dimensions as the input image. Fill every gray pixel in the blank area. Do NOT return a different size or aspect ratio.`
     }
 
-    const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openRouterKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': request.headers.get('referer') || 'http://localhost:3000',
-        'X-Title': 'AI Image Extender',
-      },
-      body: JSON.stringify({
-        model: modelId,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'image_url', image_url: { url: expandedCanvas } },
-              { type: 'text', text: prompt },
-            ],
-          },
-        ],
-        max_tokens: 2000,
-        temperature: attempt === 0 ? 0.3 : attempt === 1 ? 0.5 : 0.7,
-      }),
+    const result = await chatCompletion({
+      key: providerKey,
+      model: modelId,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: expandedCanvas } },
+            { type: 'text', text: prompt },
+          ],
+        },
+      ],
+      maxTokens: 2000,
+      temperature: attempt === 0 ? 0.3 : attempt === 1 ? 0.5 : 0.7,
+      wantImage: true,
+      referer: request.headers.get('referer'),
+      title: 'AI Image Extender',
     })
 
-    if (!response.ok) {
-      const errBody = await response.text()
-      let errorMessage = 'Failed to extend image'
-      try {
-        errorMessage = JSON.parse(errBody)?.error?.message || errorMessage
-      } catch {
-        errorMessage = errBody.slice(0, 500) || errorMessage
-      }
-      console.error('OpenRouter API error:', response.status, errorMessage)
-      return NextResponse.json({ error: errorMessage }, { status: response.status })
-    }
-
-    const data = await response.json()
-    console.log('=== API Response Structure ===')
-    console.log(JSON.stringify(sanitizeForLogging(data), null, 2))
-
-    const message = data.choices?.[0]?.message
-    if (!message) {
-      console.error('No message in response')
-      return NextResponse.json({ error: 'No message in response' }, { status: 500 })
-    }
-
-    const imageUrl = extractImageFromAny(message)
-
-    console.log('\n=== Message Content Structure ===')
-    console.log('Content type:', message.content === null ? 'null' : Array.isArray(message.content) ? 'array' : typeof message.content)
-    console.log('Has images array:', !!(message.images?.length))
-    console.log('Image extracted:', !!imageUrl)
-    console.log('===============================\n')
-
-    if (!imageUrl) {
-      console.error('No image URL found. Message structure:', JSON.stringify(sanitizeForLogging(message), null, 2))
+    if (!result.imageUrl) {
+      console.error('No image URL found in provider response')
       return NextResponse.json(
         {
           error: 'The model responded without an image. It may not support image extension yet.',
-          debug: {
-            hasContent: !!message.content,
-            contentType: Array.isArray(message.content) ? 'array' : typeof message.content,
-          },
         },
         { status: 500 }
       )
     }
 
-    return NextResponse.json({ imageUrl, chunkInfo })
+    return NextResponse.json({ imageUrl: result.imageUrl, chunkInfo })
   } catch (error) {
     console.error('Error in extend route:', error)
+    if (error instanceof ProviderError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Internal server error' },
       { status: 500 }
     )
   }
-}
-
-/** Truncate base64 in nested objects so server logs stay readable. */
-function sanitizeForLogging(obj: any, depth = 0): any {
-  if (depth > 10) return '[MAX_DEPTH]'
-  if (typeof obj === 'string') {
-    if (obj.length > 500) return `[STRING_DATA: ${obj.length} chars]`
-    if (obj.startsWith('data:image')) return `[DATA_URL: ${obj.length} chars]`
-    return obj
-  }
-  if (Array.isArray(obj)) return obj.map((item) => sanitizeForLogging(item, depth + 1))
-  if (obj && typeof obj === 'object') {
-    const out: any = {}
-    for (const key in obj) {
-      out[key] = typeof obj[key] === 'string' && obj[key].length > 500
-        ? `[LONG_STRING: ${obj[key].length} chars]`
-        : sanitizeForLogging(obj[key], depth + 1)
-    }
-    return out
-  }
-  return obj
 }
 
